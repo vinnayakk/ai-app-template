@@ -1,6 +1,9 @@
 import csv
 import json
+import shutil
 import sys
+from datetime import datetime
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -14,27 +17,46 @@ def run_pipeline(brief_path: str, count: int = 5):
     with open(brief_path) as f:
         brief = json.load(f)
 
+    brand_name = brief["brand"]["name"]
+    safe_name = brand_name.lower().replace(" ", "_")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    output_dir = Path("outputs") / f"{safe_name}_{timestamp}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     variants = generate_copy(brief, count=count)
 
     rows = []
     for variant in variants:
         print(f"Generating image for variant {variant.variant_number}...")
         image_path = generate_image(brief, variant.model_dump())
+
+        destination = output_dir / Path(image_path).name
+        shutil.move(image_path, destination)
+
         row = variant.model_dump()
-        row["image_path"] = image_path
+        row["image_file"] = destination.name
         rows.append(row)
 
-    safe_name = brief["brand"]["name"].lower().replace(" ", "_")
-    output_csv = f"{safe_name}_pipeline_results.csv"
-
-    with open(output_csv, "w", newline="") as f:
+    csv_path = output_dir / "results.csv"
+    with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(
-            f, fieldnames=["variant_number", "headline", "body", "cta", "image_path"]
+            f, fieldnames=["variant_number", "headline", "body", "cta", "image_file"]
         )
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"Done. Wrote {len(rows)} rows to {output_csv}")
+    manifest = {
+        "brand": brand_name,
+        "brief_file": brief_path,
+        "generated_at": datetime.now().isoformat(),
+        "variant_count": len(rows),
+        "variants": rows,
+    }
+    with open(output_dir / "manifest.json", "w") as f:
+        json.dump(manifest, f, indent=2)
+
+    print(f"Done. Saved {len(rows)} variants to {output_dir}/")
 
 
 if __name__ == "__main__":
